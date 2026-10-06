@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?Define POSTGRES_IMAGE in .env}
+    container_name: ${POSTGRES_CONTAINER_NAME:?Define POSTGRES_CONTAINER_NAME in .env}
+    restart: ${POSTGRES_RESTART_POLICY:?Define POSTGRES_RESTART_POLICY in .env}
+    command: ["postgres", "-c", "port=${POSTGRES_CONTAINER_PORT:?Define POSTGRES_CONTAINER_PORT in .env}"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Define POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Define POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD in .env}
+      POSTGRES_CONTAINER_PORT: ${POSTGRES_CONTAINER_PORT:?Define POSTGRES_CONTAINER_PORT in .env}
+    ports:
+      - "${POSTGRES_PORT:?Define POSTGRES_PORT in .env}:${POSTGRES_CONTAINER_PORT:?Define POSTGRES_CONTAINER_PORT in .env}"
+    volumes:
+      - postgres_meteorite:/var/lib/postgresql/data
+    networks:
+      - meteorite_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -p $${POSTGRES_CONTAINER_PORT} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      timeout: ${POSTGRES_HEALTHCHECK_TIMEOUT:?Define POSTGRES_HEALTHCHECK_TIMEOUT in .env}
+      interval: ${POSTGRES_HEALTHCHECK_INTERVAL:?Define POSTGRES_HEALTHCHECK_INTERVAL in .env}
+      retries: ${POSTGRES_HEALTHCHECK_RETRIES:?Define POSTGRES_HEALTHCHECK_RETRIES in .env}
+      start_period: ${POSTGRES_HEALTHCHECK_START_PERIOD:?Define POSTGRES_HEALTHCHECK_START_PERIOD in .env}
+
+networks:
+  meteorite_network:
+    driver: bridge
+
+volumes:
+  postgres_meteorite:
+    name: ${POSTGRES_VOLUME_NAME:?Define POSTGRES_VOLUME_NAME in .env}
