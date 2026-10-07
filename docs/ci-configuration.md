@@ -16,3 +16,5 @@ The workflow reads PostgreSQL and Python settings from GitHub Actions repository
 Add `POSTGRES_PASSWORD` under **Secrets**. The workflow uses it only for its temporary PostgreSQL service and test connection.
 
 The workflow runs unit and PostgreSQL integration tests for pushes to `main` and pull requests targeting `main`.
+
+The PostgreSQL integration tests require `POSTGRES_TEST_DB` to match `POSTGRES_DB`. The workflow sets this guard because its PostgreSQL service is temporary. For local runs, set both variables to a dedicated disposable database; without the guard, the integration test class is skipped. Never point it at the database used by Tableau.
