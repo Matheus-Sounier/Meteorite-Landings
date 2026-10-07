@@ -20,6 +20,7 @@ jobs:
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       POSTGRES_HOST: ${{ vars.POSTGRES_HOST }}
       POSTGRES_PORT: ${{ vars.POSTGRES_PORT }}
+      POSTGRES_TEST_DB: ${{ vars.POSTGRES_DB }}
     services:
       postgres:
         image: ${{ vars.POSTGRES_IMAGE }}
