@@ -11,7 +11,9 @@ def normalize_numeric_columns(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Seri
     original_numeric = normalized[NUMERIC_COLUMNS].copy()
 
     for column in NUMERIC_COLUMNS:
-        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+        normalized[column] = pd.to_numeric(
+            normalized[column], errors="coerce"
+        ).astype("float64")
 
     invalid_numeric_format = (
         original_numeric.notna() & normalized[NUMERIC_COLUMNS].isna()

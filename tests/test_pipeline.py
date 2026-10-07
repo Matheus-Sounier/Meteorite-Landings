@@ -89,6 +89,28 @@ class MeteoritePipelineTests(unittest.TestCase):
             with self.assertRaises(CsvReadError):
                 load_csv(empty_path)
 
+    def test_normalizes_numeric_values_and_marks_invalid_formats(self) -> None:
+        data = pd.DataFrame(
+            [
+                {"mass (g)": "21.5", "year": "1880", "reclat": "50.1", "reclong": "-100"},
+                {"mass (g)": None, "year": None, "reclat": None, "reclong": None},
+                {
+                    "mass (g)": "not-a-number",
+                    "year": "unknown",
+                    "reclat": "north",
+                    "reclong": "west",
+                },
+            ]
+        )
+
+        normalized, invalid_numeric_format = normalize_numeric_columns(data)
+
+        self.assertEqual(normalized.loc[0, "mass (g)"], 21.5)
+        self.assertEqual(normalized.loc[0, "year"], 1880.0)
+        self.assertTrue(normalized.loc[1].isna().all())
+        self.assertTrue(normalized.loc[2].isna().all())
+        self.assertEqual(invalid_numeric_format.tolist(), [False, False, True])
+
     def test_flags_suspicious_values_without_dropping_rows(self) -> None:
         data, invalid_numeric_format = normalize_numeric_columns(self.make_data())
         validated = validate_dataset(data)
@@ -117,6 +139,69 @@ class MeteoritePipelineTests(unittest.TestCase):
         self.assertTrue(flagged.loc[0, "quality_invalid_latitude"])
         self.assertTrue(flagged.loc[0, "quality_any_issue"])
         self.assertEqual(report["invalid_latitude"], 1)
+
+    def test_coordinate_boundaries_and_invalid_coordinate_cases(self) -> None:
+        boundary_values = [
+            (-90, -180),
+            (90, 180),
+            (90.01, 0),
+            (0, -180.01),
+            (None, 12),
+            (0, 0),
+        ]
+        data = pd.concat(
+            [self.make_data().iloc[[0]] for _ in boundary_values],
+            ignore_index=True,
+        )
+        data["id"] = range(1, len(boundary_values) + 1)
+        data["reclat"] = [latitude for latitude, _ in boundary_values]
+        data["reclong"] = [longitude for _, longitude in boundary_values]
+        normalized, invalid_numeric_format = normalize_numeric_columns(data)
+
+        flagged = add_quality_flags(validate_dataset(normalized), invalid_numeric_format)
+
+        self.assertFalse(flagged.loc[0, "quality_invalid_latitude"])
+        self.assertFalse(flagged.loc[0, "quality_longitude_outside_range"])
+        self.assertFalse(flagged.loc[1, "quality_invalid_latitude"])
+        self.assertFalse(flagged.loc[1, "quality_longitude_outside_range"])
+        self.assertTrue(flagged.loc[2, "quality_invalid_latitude"])
+        self.assertTrue(flagged.loc[3, "quality_longitude_outside_range"])
+        self.assertTrue(flagged.loc[4, "quality_missing_coordinates"])
+        self.assertTrue(flagged.loc[5, "quality_zero_coordinates"])
+
+    def test_quality_report_contains_every_metric(self) -> None:
+        data, invalid_numeric_format = normalize_numeric_columns(self.make_data())
+        flagged = add_quality_flags(validate_dataset(data), invalid_numeric_format)
+
+        report = build_quality_report(flagged).set_index("metric")["value"]
+
+        self.assertEqual(
+            report.to_dict(),
+            {
+                "records_total": 4,
+                "unique_ids": 3,
+                "records_with_any_quality_flag": 3,
+                "missing_mass": 2,
+                "missing_year": 1,
+                "missing_coordinates": 1,
+                "zero_zero_coordinates": 1,
+                "invalid_latitude": 0,
+                "longitude_outside_minus180_180": 1,
+                "future_year": 1,
+                "negative_mass": 1,
+                "duplicate_id_rows": 2,
+                "invalid_numeric_format_rows": 1,
+            },
+        )
+
+    def test_quality_report_returns_zero_metrics_for_empty_data(self) -> None:
+        data, invalid_numeric_format = normalize_numeric_columns(self.make_data())
+        flagged = add_quality_flags(validate_dataset(data), invalid_numeric_format)
+
+        report = build_quality_report(flagged.iloc[:0]).set_index("metric")["value"]
+
+        self.assertTrue(report.eq(0).all())
+        self.assertEqual(len(report), 13)
 
     @patch("meteorite_pipeline.application.orchestration.write_to_database")
     @patch("meteorite_pipeline.application.orchestration.load_csv")
