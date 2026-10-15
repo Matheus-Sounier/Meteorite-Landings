@@ -4,3 +4,4 @@ psycopg[binary]==3.2.9
 python-dotenv==1.1.1
 dash==4.4.1
 dash-mantine-components==2.8.0
+headroom-ai[proxy]
