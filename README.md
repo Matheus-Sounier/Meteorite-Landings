@@ -69,6 +69,55 @@ O pipeline normaliza os campos numéricos, valida as colunas, calcula flags de q
 
 Cada execução substitui integralmente o conteúdo atual dessas tabelas dentro de uma transação. Não é uma carga incremental nem mantém histórico entre execuções.
 
+## Preparar acesso somente leitura para o Dash
+
+`POSTGRES_USER` fica reservado ao pipeline, que precisa gravar dados. Para o Dash, preencha `DASH_DB_USER` com um nome de role novo e `DASH_DB_PASSWORD` com uma senha exclusiva no `.env`; essas credenciais devem ser diferentes das credenciais do pipeline.
+
+Depois de executar o pipeline pelo menos uma vez para criar as tabelas, crie o role de leitura:
+
+```powershell
+python -m meteorite_pipeline.db.provision_dash_reader
+```
+
+O provisionador conecta usando `POSTGRES_USER`, valida que as tabelas existem e que o role Dash ainda não existe, então cria um role sem privilégios administrativos. Ele concede `SELECT` apenas em `meteorite_landings` e `data_quality_report`, além de `CONNECT` ao banco e `USAGE` no schema `public`. Também define `search_path=public`, transações read-only por padrão e privilégio padrão de `SELECT` para futuras tabelas criadas pelo usuário do pipeline. O PostgreSQL usa `search_path` para resolver nomes sem schema prefixado; os `GRANT`s são o que limitam a leitura.
+
+O comando é intencionalmente conservador: se o role já existir, ele aborta em vez de alterar privilégios silenciosamente. Revise a conta existente manualmente antes de reutilizá-la. A aplicação Dash deve abrir conexões com `get_dash_connection()`; o pipeline continua usando `get_connection()`.
+
+Dash e Dash Mantine Components estão declarados no `requirements.txt`. Instale-os junto com o restante do projeto usando `python -m pip install -r requirements.txt` no ambiente virtual.
+
+### Iniciar o dashboard
+
+O PostgreSQL precisa estar em execução antes de iniciar o Dash. Se o Docker estiver sendo executado pelo WSL, abra o terminal WSL e, na pasta do projeto, inicie/confirme o serviço:
+
+```bash
+docker compose up -d --wait
+docker compose ps
+```
+
+Confirme que o serviço `postgres` está saudável. O Compose publica a porta configurada em `POSTGRES_PORT`; ao executar o Python no Windows, `POSTGRES_HOST` precisa apontar para um endereço acessível pelo Windows (com Docker Desktop e integração WSL, normalmente `localhost`). O terminal WSL não precisa ficar aberto se o daemon Docker continuar em execução.
+
+Depois, no PowerShell, na raiz do projeto e com o ambiente virtual ativado, inicie o app:
+
+```powershell
+python -m meteorite_pipeline.dashboard.app
+```
+
+Abra `http://127.0.0.1:8050` no navegador. O host, a porta e o modo de depuração vêm de `DASH_HOST`, `DASH_PORT` e `DASH_DEBUG`; as credenciais de leitura vêm de `DASH_DB_USER` e `DASH_DB_PASSWORD`. Se o banco estiver indisponível, o Dash mostra um alerta e registra o erro no log; inicie o PostgreSQL e atualize a página.
+
+### Chat de meteoritos
+
+O chat usa `OPENROUTER_API_KEY` e `OPENROUTER_MODEL` do `.env`. Ele consulta o conjunto local por operações estruturadas e limitadas, usando o role somente leitura do Dash; não executa SQL escrito pelo modelo. A integração de busca web do OpenRouter pode fornecer contexto externo e citações, e pode gerar cobrança adicional conforme modelo e buscas utilizadas.
+
+O histórico persistente usa `CHAT_DB_USER` e `CHAT_DB_PASSWORD`, que devem ser diferentes de `POSTGRES_USER` e `DASH_DB_USER`. Depois de preencher as credenciais no `.env`, crie as tabelas e o role restrito do chat:
+
+```powershell
+python -m meteorite_pipeline.db.provision_chat_store
+```
+
+Esse role tem permissão de leitura/escrita somente nas tabelas de conversas e mensagens; ele não recebe acesso à tabela de meteoritos. O Dashboard continua usando o role somente leitura. A aplicação não tem autenticação de usuários nesta etapa; mantenha `DASH_HOST=127.0.0.1` e não exponha o servidor em uma rede compartilhada.
+
+No dashboard, selecione **Meteorite chat**. As conversas ficam salvas no PostgreSQL e podem ser retomadas pela lista lateral. A base local é a referência para perguntas sobre registros; quando o modelo recorrer à web, a resposta deve trazer as fontes citadas.
+
 ## Conectar o Tableau
 
 No Tableau Desktop, escolha o conector **PostgreSQL** e informe os valores correspondentes à configuração local:
@@ -82,6 +131,8 @@ No Tableau Desktop, escolha o conector **PostgreSQL** e informe os valores corre
 Selecione a tabela `meteorite_landings` para os dados detalhados e `data_quality_report` para as métricas agregadas. Para mapas, use `reclat` e `reclong`; consulte as flags `quality_missing_coordinates`, `quality_zero_coordinates`, `quality_invalid_latitude` e `quality_longitude_outside_range` para filtrar coordenadas inadequadas. As flags identificam problemas, mas não removem os registros.
 
 O usuário `POSTGRES_USER` configurado na imagem oficial é o usuário inicial do banco. Para uso recorrente no Tableau, prefira criar uma conta separada com permissão somente de leitura. Se usar Tableau Server ou Tableau Cloud, `localhost` não aponta para o computador de desenvolvimento: configure um endpoint acessível e proteja o acesso ao banco com rede privada/firewall e credenciais de leitura.
+
+No dashboard, os indicadores e agregações usam os registros filtrados completos. O globo usa uma amostra de até 4.000 coordenadas válidas para manter a interação fluida; no zoom afastado, as células hexagonais contam `Fell` e `Found` dentro dessa amostra, e no zoom aproximado os registros aparecem individualmente.
 
 ## Testes
 

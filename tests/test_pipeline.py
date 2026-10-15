@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -5,10 +6,13 @@ from unittest.mock import patch
 
 import pandas as pd
 import psycopg
+from psycopg import sql
 from pandera.errors import SchemaErrors
 
 from meteorite_pipeline.ingestion.csv_source import CsvReadError, load_csv
 from meteorite_pipeline.application.orchestration import run_pipeline
+from meteorite_pipeline.db.connection import get_dash_connection
+from meteorite_pipeline.db.provision_dash_reader import provision_dash_reader
 from meteorite_pipeline.reporting.quality_report import build_quality_report
 from meteorite_pipeline.storage.output_writer import DatabaseWriteError, write_to_database
 from meteorite_pipeline.transformation.quality_flags import add_quality_flags, normalize_numeric_columns
@@ -216,6 +220,67 @@ class MeteoritePipelineTests(unittest.TestCase):
         self.assertEqual(len(processed_data), len(source_data))
         self.assertEqual(report.loc[0, "metric"], "records_total")
         write_to_database_mock.assert_called_once_with(processed_data, report)
+
+    @patch.dict(
+        os.environ,
+        {
+            "POSTGRES_DB": "meteorites",
+            "POSTGRES_HOST": "localhost",
+            "POSTGRES_PORT": "5432",
+            "DASH_DB_USER": "dash_reader",
+            "DASH_DB_PASSWORD": "dash-test-password",
+        },
+    )
+    @patch("meteorite_pipeline.db.connection.psycopg.connect")
+    def test_dash_connection_uses_dedicated_credentials(self, connect_mock) -> None:
+        get_dash_connection()
+
+        connect_mock.assert_called_once_with(
+            dbname="meteorites",
+            user="dash_reader",
+            password="dash-test-password",
+            host="localhost",
+            port=5432,
+            connect_timeout=5,
+        )
+
+    @patch.dict(
+        os.environ,
+        {
+            "POSTGRES_DB": "meteorites",
+            "POSTGRES_USER": "pipeline_owner",
+            "DASH_DB_USER": "dash_reader",
+            "DASH_DB_PASSWORD": "dash-test-password",
+        },
+    )
+    @patch("meteorite_pipeline.db.provision_dash_reader.get_connection")
+    def test_provisions_dash_role_with_read_only_grants(self, get_connection_mock) -> None:
+        connection = get_connection_mock.return_value
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchone.side_effect = [None, (True, True)]
+
+        provision_dash_reader()
+
+        self.assertEqual(cursor.execute.call_count, 9)
+        self.assertIsInstance(cursor.execute.call_args_list[5].args[0], sql.Composed)
+        connection.commit.assert_called_once_with()
+        connection.rollback.assert_not_called()
+        connection.close.assert_called_once_with()
+
+    @patch.dict(
+        os.environ,
+        {
+            "POSTGRES_USER": "pipeline_owner",
+            "DASH_DB_USER": "pipeline_owner",
+            "DASH_DB_PASSWORD": "dash-test-password",
+        },
+    )
+    @patch("meteorite_pipeline.db.provision_dash_reader.get_connection")
+    def test_provisioner_rejects_pipeline_user_for_dash(self, get_connection_mock) -> None:
+        with self.assertRaisesRegex(ValueError, "must differ from POSTGRES_USER"):
+            provision_dash_reader()
+
+        get_connection_mock.assert_not_called()
 
     @patch("meteorite_pipeline.storage.output_writer.get_connection")
     def test_writes_processed_data_and_report_to_database(self, get_connection) -> None:
